@@ -1,5 +1,10 @@
 ;;; tools/magit/config.el -*- lexical-binding: t; -*-
 
+(defvar +magit-open-windows-in-direction 'right
+  "What direction to open new windows from the status buffer.
+For example, diffs and log buffers. Accepts `left', `right', `up', and `down'.")
+
+
 ;;
 ;;; Packages
 
@@ -13,13 +18,18 @@
         transient-values-file  (concat doom-etc-dir "transient/values")
         transient-history-file (concat doom-etc-dir "transient/history"))
   :config
+  (add-to-list 'doom-debug-variables 'magit-refresh-verbose)
+
   (setq transient-default-level 5
-        magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")
         magit-diff-refine-hunk t ; show granular diffs in selected hunk
         ;; Don't autosave repo buffers. This is too magical, and saving can
         ;; trigger a bunch of unwanted side-effects, like save hooks and
-        ;; formatters. Trust us to know what we're doing.
-        magit-save-repository-buffers nil)
+        ;; formatters. Trust the user to know what they're doing.
+        magit-save-repository-buffers nil
+        ;; Don't display parent/related refs in commit buffers; they are rarely
+        ;; helpful and only add to runtime costs.
+        magit-revision-insert-related-refs nil)
+  (add-hook 'magit-process-mode-hook #'goto-address-mode)
 
   (defadvice! +magit-revert-repo-buffers-deferred-a (&rest _)
     :after '(magit-checkout magit-branch-and-checkout)
@@ -31,6 +41,10 @@
     (+magit-mark-stale-buffers-h))
   ;; ...then refresh the rest only when we switch to them, not all at once.
   (add-hook 'doom-switch-buffer-hook #'+magit-revert-buffer-maybe-h)
+
+  ;; Center the target file, because it's poor UX to have it at the bottom of
+  ;; the window after invoking `magit-status-here'.
+  (advice-add #'magit-status-here :after #'doom-recenter-a)
 
   ;; The default location for git-credential-cache is in
   ;; ~/.cache/git/credential. However, if ~/.git-credential-cache/ exists, then
@@ -66,7 +80,8 @@
   ;; 2. The status screen isn't buried when viewing diffs or logs from the
   ;;    status screen.
   (setq transient-display-buffer-action '(display-buffer-below-selected)
-        magit-display-buffer-function #'+magit-display-buffer-fn)
+        magit-display-buffer-function #'+magit-display-buffer-fn
+        magit-bury-buffer-function #'magit-mode-quit-window)
   (set-popup-rule! "^\\(?:\\*magit\\|magit:\\| \\*transient\\*\\)" :ignore t)
   (add-hook 'magit-popup-mode-hook #'hide-mode-line-mode)
 
@@ -88,15 +103,26 @@
   (define-key magit-status-mode-map [remap magit-mode-bury-buffer] #'+magit/quit)
 
   ;; Close transient with ESC
-  (define-key transient-map [escape] #'transient-quit-one))
+  (define-key transient-map [escape] #'transient-quit-one)
+
+  ;; An optimization that particularly affects macOS and Windows users: by
+  ;; resolving `magit-git-executable' Emacs does less work to find the
+  ;; executable in your PATH, which is great because it is called so frequently.
+  ;; However, absolute paths will break magit in TRAMP/remote projects if the
+  ;; git executable isn't in the exact same location.
+  (add-hook! 'magit-status-mode-hook
+    (defun +magit-optimize-process-calls-h ()
+      (when-let (path (executable-find magit-git-executable t))
+        (setq-local magit-git-executable path)))))
 
 
 (use-package! forge
+  :when (featurep! +forge)
   ;; We defer loading even further because forge's dependencies will try to
   ;; compile emacsql, which is a slow and blocking operation.
   :after-call magit-status
   :commands forge-create-pullreq forge-create-issue
-  :init
+  :preface
   (setq forge-database-file (concat doom-etc-dir "forge/forge-database.sqlite"))
   :config
   ;; All forge list modes are derived from `forge-topic-list-mode'
@@ -123,8 +149,8 @@ ensure it is built when we actually use Forge."
           (message (concat "Failed to build emacsql; forge may not work correctly.\n"
                            "See *Compile-Log* buffer for details"))
         ;; HACK Due to changes upstream, forge doesn't initialize completely if
-        ;; it doesn't find `emacsql-sqlite-executable', so we have to do it
-        ;; manually after installing it.
+        ;;      it doesn't find `emacsql-sqlite-executable', so we have to do it
+        ;;      manually after installing it.
         (setq forge--sqlite-available-p t)
         (magit-add-section-hook 'magit-status-sections-hook 'forge-insert-pullreqs nil t)
         (magit-add-section-hook 'magit-status-sections-hook 'forge-insert-issues   nil t)
@@ -147,43 +173,70 @@ ensure it is built when we actually use Forge."
   :after magit
   :config
   (setq magit-todos-keyword-suffix "\\(?:([^)]+)\\)?:?") ; make colon optional
-  (define-key magit-todos-section-map "j" nil)
-  ;; Warns that jT isn't bound. Well, yeah, you don't need to tell me, that was
-  ;; on purpose ya goose.
-  (advice-add #'magit-todos-mode :around #'doom-shut-up-a))
+  (define-key magit-todos-section-map "j" nil))
 
 
 (use-package! magit-gitflow
   :hook (magit-mode . turn-on-magit-gitflow))
 
 
-(use-package! evil-magit
+(use-package! evil-collection-magit
   :when (featurep! :editor evil +everywhere)
-  :after magit
-  :init
-  (setq evil-magit-state 'normal
-        evil-magit-use-z-for-folds t)
+  :defer t
+  :init (defvar evil-collection-magit-use-z-for-folds t)
   :config
-  (unmap! magit-mode-map
-    ;; Replaced by z1, z2, z3, etc
-    "M-1" "M-2" "M-3" "M-4"
-    "1" "2" "3" "4"
-    "0") ; moved to g=
-  (evil-define-key* 'normal magit-status-mode-map [escape] nil) ; q is enough
+  ;; These numbered keys mask the numerical prefix keys. Since they've already
+  ;; been replaced with z1, z2, z3, etc (and 0 with g=), there's no need to keep
+  ;; them around:
+  (undefine-key! magit-mode-map "M-1" "M-2" "M-3" "M-4" "1" "2" "3" "4" "0")
+
+  ;; q is enough; ESC is way too easy for a vimmer to accidentally press,
+  ;; especially when traversing modes in magit buffers.
+  (evil-define-key* 'normal magit-status-mode-map [escape] nil)
+
+  ;; Some extra vim-isms I thought were missing from upstream
   (evil-define-key* '(normal visual) magit-mode-map
     "%"  #'magit-gitflow-popup
+    "zt" #'evil-scroll-line-to-top
     "zz" #'evil-scroll-line-to-center
-    "g=" #'magit-diff-default-context)
+    "zb" #'evil-scroll-line-to-bottom
+    "g=" #'magit-diff-default-context
+    "gi" #'forge-jump-to-issues
+    "gm" #'forge-jump-to-pullreqs)
+
+  ;; Fix these keybinds because they are blacklisted
+  ;; REVIEW There must be a better way to exclude particular evil-collection
+  ;;        modules from the blacklist.
+  (map! (:map magit-mode-map
+         :nv "]" #'magit-section-forward-sibling
+         :nv "[" #'magit-section-backward-sibling
+         :nv "gr" #'magit-refresh
+         :nv "gR" #'magit-refresh-all)
+        (:map magit-status-mode-map
+         :nv "gz" #'magit-refresh)
+        (:map magit-diff-mode-map
+         :nv "gd" #'magit-jump-to-diffstat-or-diff))
+
+  ;; A more intuitive behavior for TAB in magit buffers:
   (define-key! 'normal
     (magit-status-mode-map
      magit-stash-mode-map
      magit-revision-mode-map
+     magit-process-mode-map
      magit-diff-mode-map)
     [tab] #'magit-section-toggle)
+
   (after! git-rebase
     (dolist (key '(("M-k" . "gk") ("M-j" . "gj")))
-      (when-let (desc (assoc (car key) evil-magit-rebase-commands-w-descriptions))
+      (when-let (desc (assoc (car key) evil-collection-magit-rebase-commands-w-descriptions))
         (setcar desc (cdr key))))
-    (evil-define-key* evil-magit-state git-rebase-mode-map
+    (evil-define-key* evil-collection-magit-state git-rebase-mode-map
       "gj" #'git-rebase-move-line-down
-      "gk" #'git-rebase-move-line-up)))
+      "gk" #'git-rebase-move-line-up))
+
+  (after! magit-gitflow
+    (transient-replace-suffix 'magit-dispatch 'magit-worktree
+      '("%" "Gitflow" magit-gitflow-popup)))
+
+  (transient-append-suffix 'magit-dispatch '(0 -1 -1)
+    '("*" "Worktree" magit-worktree)))

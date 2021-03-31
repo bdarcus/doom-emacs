@@ -62,32 +62,60 @@
                 (append vars sp--mc/cursor-specific-vars)))))
 
   ;; Whitelist more commands
-  (dolist (fn '((delete-char)
-                (backward-kill-word)
+  (dolist (fn '((backward-kill-word)
                 (company-complete-common . evil-mc-execute-default-complete)
                 (doom/backward-to-bol-or-indent . evil-mc-execute-default-call)
                 (doom/forward-to-last-non-comment-or-eol . evil-mc-execute-default-call)
+                ;; :emacs undo
+                (undo-fu-only-undo . evil-mc-execute-default-undo)
+                (undo-fu-only-redo . evil-mc-execute-default-redo)
+                ;; :editor evil
                 (evil-delete-back-to-indentation . evil-mc-execute-default-call)
-                ;; Have evil-mc work with explicit `evil-escape' (on C-g)
-                (evil-escape . evil-mc-execute-default-evil-normal-state)
-                ;; Add `evil-org' support
-                (evil-org-delete . evil-mc-execute-default-evil-delete)
-                (evil-org-delete-char . evil-mc-execute-default-evil-delete)
-                (evil-org-delete-backward-char . evil-mc-execute-default-evil-delete)
-                ;; `evil-numbers'
+                (evil-escape . evil-mc-execute-default-evil-normal-state)  ; C-g
                 (evil-numbers/inc-at-pt-incremental)
-                (evil-numbers/dec-at-pt-incremental)))
-    (cl-pushnew `(,(car fn) (:default . ,(or (cdr fn) #'evil-mc-execute-default-call-with-count)))
-                evil-mc-custom-known-commands
-                :test #'eq
-                :key #'car))
+                (evil-numbers/dec-at-pt-incremental)
+                (evil-digit-argument-or-evil-beginning-of-visual-line
+                 (:default . evil-mc-execute-default-call)
+                 (visual . evil-mc-execute-visual-call))
+                ;; :tools eval
+                (+eval:replace-region . +multiple-cursors-execute-default-operator-fn)
+                ;; :lang ess
+                (ess-smart-comma . evil-mc-execute-call)
+                ;; :lang org
+                (evil-org-delete . evil-mc-execute-default-evil-delete)))
+    (setf (alist-get (car fn) evil-mc-custom-known-commands)
+          (if (and (cdr fn) (listp (cdr fn)))
+              (cdr fn)
+            (list (cons :default
+                        (or (cdr fn)
+                            #'evil-mc-execute-default-call-with-count))))))
+
+  ;; HACK Allow these commands to be repeated by prefixing them with a numerical
+  ;;      argument. See gabesoft/evil-mc#110
+  (defadvice! +multiple-cursors--make-repeatable-a (orig-fn)
+    :around '(evil-mc-make-and-goto-first-cursor
+              evil-mc-make-and-goto-last-cursor
+              evil-mc-make-and-goto-prev-cursor
+              evil-mc-make-and-goto-next-cursor
+              evil-mc-skip-and-goto-prev-cursor
+              evil-mc-skip-and-goto-next-cursor
+              evil-mc-make-and-goto-prev-match
+              evil-mc-make-and-goto-next-match
+              evil-mc-skip-and-goto-prev-match
+              evil-mc-skip-and-goto-next-match)
+    (dotimes (i (if (integerp current-prefix-arg) current-prefix-arg 1))
+      (funcall orig-fn)))
 
   ;; If we're entering insert mode, it's a good bet that we want to start using
   ;; our multiple cursors
   (add-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors)
 
-  ;; evil-escape's escape key sequence leaves behind extraneous characters
-  (cl-pushnew 'evil-escape-mode evil-mc-incompatible-minor-modes)
+  (pushnew! evil-mc-incompatible-minor-modes
+            ;; evil-escape's escape key leaves behind extraneous characters
+            'evil-escape-mode
+            ;; Lispy commands don't register on more than 1 cursor. Lispyville
+            ;; is fine though.
+            'lispy-mode)
 
   (add-hook! 'doom-escape-hook
     (defun +multiple-cursors-escape-multiple-cursors-h ()
@@ -111,6 +139,9 @@
 
 (after! multiple-cursors-core
   (setq mc/list-file (concat doom-etc-dir "mc-lists.el"))
+
+  ;; Can't use `mc/cmds-to-run-once' because mc-lists.el overwrites it
+  (add-to-list 'mc--default-cmds-to-run-once 'swiper-mc)
 
   ;; TODO multiple-cursors config for Emacs users?
 
@@ -141,7 +172,7 @@
       (defun +multiple-cursors-compat-back-to-previous-state-h ()
         (when +mc--compat-evil-prev-state
           (unwind-protect
-              (case +mc--compat-evil-prev-state
+              (cl-case +mc--compat-evil-prev-state
                 ((normal visual) (evil-force-normal-state))
                 (t (message "Don't know how to handle previous state: %S"
                             +mc--compat-evil-prev-state)))

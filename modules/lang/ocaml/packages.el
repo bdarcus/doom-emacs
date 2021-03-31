@@ -1,25 +1,24 @@
 ;; -*- no-byte-compile: t; -*-
 ;;; lang/ocaml/packages.el
 
-(package! tuareg :pin "c12061eb80")
+(package! tuareg :pin "37a673020152ae0dbcaa250118b155d84e448f68")
 
 (unless (featurep! +lsp)
-  (package! merlin :pin "37e38e44f5")
-  (package! merlin-eldoc :pin "db7fab1edd")
+  (package! merlin :pin "cc17ed60630fb1831ad950fe62970b1c7a7f4c8b")
+  (package! merlin-eldoc :pin "db7fab1eddfe34781b7e79694f8923b285698032")
   (when (featurep! :checkers syntax)
-    (package! flycheck-ocaml :pin "8707a7bf54")))
+    (package! flycheck-ocaml :pin "8707a7bf545a8639a6a5c600a98d9a2ea1487dc9")))
 
-(package! ocp-indent :pin "9e26c0a269")
+(package! ocp-indent :pin "9e26c0a2699b7076cebc04ece59fb354eb84c11c")
 
 (when (featurep! :tools eval)
-  (package! utop :pin "30c77ce4d7"))
+  (package! utop :pin "a5ff52bbf608e1112b5c0d41a36e3267f39f4084"))
 
 (when (featurep! :editor format)
-  ;; by default quelpa generated a version 0pre0.20180929.192844, which got
-  ;; parsed into (0 -1 0 ...), which when compared with version nil (0) in
-  ;; package-installed-p always yielded false
-  (package! ocamlformat :recipe
-    (:host github :repo "ocaml-ppx/ocamlformat" :files ("emacs/*.el")) :pin "5282e047bb"))
+  (package! ocamlformat
+    :recipe (:host github :repo "ocaml-ppx/ocamlformat" :files ("emacs/*.el"))
+    :pin "448ac7c1496e2a6e83d63a7bcd9cf4e35bb2b1fb"))
 
-(package! dune :recipe
-  (:host github :repo "ocaml/dune" :files ("editor-integration/emacs/*.el")) :pin "1944d0fb52")
+(package! dune
+  :recipe (:host github :repo "ocaml/dune" :files ("editor-integration/emacs/*.el"))
+  :pin "a88ce5bbc996b550071c8df890276eb1b10e778c")

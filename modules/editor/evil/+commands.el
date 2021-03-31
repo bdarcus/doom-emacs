@@ -47,9 +47,9 @@
 (evil-ex-define-cmd "k[ill]m"     #'+evil:kill-matching-buffers)
 (evil-ex-define-cmd "k[ill]o"     #'doom/kill-other-buffers)
 (evil-ex-define-cmd "k[ill]b"     #'doom/kill-buried-buffers)
-(evil-ex-define-cmd "l[ast]"      #'doom/popup-restore)
+(evil-ex-define-cmd "l[ast]"      #'+popup/restore)
 (evil-ex-define-cmd "messages"    #'view-echo-area-messages)
-(evil-ex-define-cmd "pop[up]"     #'doom/popup-this-buffer)
+(evil-ex-define-cmd "pop[up]"     #'+popup/buffer)
 
 ;;; Project navigation
 (evil-ex-define-cmd "a"           #'projectile-find-other-file)
@@ -91,11 +91,15 @@
 (evil-ex-define-cmd "tabl[ast]"   #'+workspace/switch-to-last)
 (evil-ex-define-cmd "tabload"     #'+workspace:load)
 (evil-ex-define-cmd "tabn[ew]"    #'+workspace:new)
-(evil-ex-define-cmd "tabn[ext]"   #'+workspace:switch-next)
-(evil-ex-define-cmd "tabp[rev]"   #'+workspace:switch-previous)
+(evil-ex-define-cmd "tabnext"     #'+workspace:switch-next)
+(evil-ex-define-cmd "tabprev"     #'+workspace:switch-previous)
 (evil-ex-define-cmd "tabr[ename]" #'+workspace:rename)
 (evil-ex-define-cmd "tabs"        #'+workspace/display)
 (evil-ex-define-cmd "tabsave"     #'+workspace:save)
 
 ;;; Org-mode
-(evil-ex-define-cmd "cap"         #'org-capture)
+(evil-ex-define-cmd "cap[ture]"   #'org-capture)
+
+;;; ibuffer
+(when (featurep! :emacs ibuffer)
+  (evil-ex-define-cmd "buffers" #'ibuffer))

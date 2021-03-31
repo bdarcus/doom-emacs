@@ -33,7 +33,8 @@ If prefix ARG is non-nil, recreate vterm buffer in the current project's root."
       (let ((buffer (get-buffer-create buffer-name)))
         (with-current-buffer buffer
           (unless (eq major-mode 'vterm-mode)
-            (vterm-mode)))
+            (vterm-mode))
+          (+vterm--change-directory-if-remote))
         (pop-to-buffer buffer)))))
 
 ;;;###autoload
@@ -55,19 +56,22 @@ If prefix ARG is non-nil, cd into `default-directory' instead of project root."
              project-root))
          display-buffer-alist)
     (setenv "PROOT" project-root)
-    (vterm)))
+    (vterm)
+    (+vterm--change-directory-if-remote)))
 
-
-(defvar +vterm--insert-point nil)
-
-;;;###autoload
-(defun +vterm-remember-insert-point-h ()
-  "Remember point when leaving insert mode."
-  (setq-local +vterm--insert-point (point)))
-
-;;;###autoload
-(defun +vterm-goto-insert-point-h ()
-  "Go to the point we were at when we left insert mode."
-  (when +vterm--insert-point
-    (goto-char +vterm--insert-point)
-    (setq-local +vterm--insert-point nil)))
+(defun +vterm--change-directory-if-remote ()
+  "When `default-directory` is remote, use the corresponding
+method to prepare vterm at the corresponding remote directory."
+  (when (and (featurep 'tramp)
+             (tramp-tramp-file-p default-directory))
+    (message "default-directory is %s" default-directory)
+    (with-parsed-tramp-file-name default-directory path
+      (let ((method (cadr (assoc `tramp-login-program
+                                 (assoc path-method tramp-methods)))))
+        (vterm-send-string
+         (concat method " "
+                 (when path-user (concat path-user "@")) path-host))
+        (vterm-send-return)
+        (vterm-send-string
+         (concat "cd " path-localname))
+        (vterm-send-return)))))

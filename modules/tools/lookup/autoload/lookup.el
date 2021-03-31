@@ -15,6 +15,12 @@ properties:
 
 :definition FN
   Run when jumping to a symbol's definition. Used by `+lookup/definition'.
+:implementations FN
+  Run when looking for implementations of a symbol in the current project. Used
+  by `+lookup/implementations'.
+:type-definition FN
+  Run when jumping to a symbol's type definition. Used by
+  `+lookup/type-definition'.
 :references FN
   Run when looking for usage references of a symbol in the current project. Used
   by `+lookup/references'.
@@ -46,6 +52,7 @@ change the current buffer or window or return non-nil when it succeeds.
 
 If it doesn't change the current buffer, or it returns nil, the lookup module
 will fall back to the next handler in `+lookup-definition-functions',
+`+lookup-implementations-functions', `+lookup-type-definition-functions',
 `+lookup-references-functions', `+lookup-file-functions' or
 `+lookup-documentation-functions'.
 
@@ -57,7 +64,7 @@ This can be passed nil as its second argument to unset handlers for MODES. e.g.
 
   (set-lookup-handlers! 'python-mode nil)
 
-\(fn MODES &key DEFINITION REFERENCES DOCUMENTATION FILE XREF-BACKEND ASYNC)"
+\(fn MODES &key DEFINITION IMPLEMENTATIONS TYPE-DEFINITION REFERENCES DOCUMENTATION FILE XREF-BACKEND ASYNC)"
   (declare (indent defun))
   (dolist (mode (doom-enlist modes))
     (let ((hook (intern (format "%s-hook" mode)))
@@ -69,15 +76,19 @@ This can be passed nil as its second argument to unset handlers for MODES. e.g.
         (fset
          fn
          (lambda ()
-           (cl-destructuring-bind (&key definition references documentation file xref-backend async)
+           (cl-destructuring-bind (&key definition implementations type-definition references documentation file xref-backend async)
                plist
              (cl-mapc #'+lookup--set-handler
                       (list definition
+                            implementations
+                            type-definition
                             references
                             documentation
                             file
                             xref-backend)
                       (list '+lookup-definition-functions
+                            '+lookup-implementations-functions
+                            '+lookup-type-definition-functions
                             '+lookup-references-functions
                             '+lookup-documentation-functions
                             '+lookup-file-functions
@@ -133,6 +144,8 @@ This can be passed nil as its second argument to unset handlers for MODES. e.g.
   (let* ((origin (point-marker))
          (handlers
           (plist-get (list :definition '+lookup-definition-functions
+                           :implementations '+lookup-implementations-functions
+                           :type-definition '+lookup-type-definition-functions
                            :references '+lookup-references-functions
                            :documentation '+lookup-documentation-functions
                            :file '+lookup-file-functions)
@@ -150,34 +163,52 @@ This can be passed nil as its second argument to unset handlers for MODES. e.g.
                   (+lookup--run-handlers handler identifier origin)
                 (user-error "No lookup handler selected"))
             (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin))))
-    (when (cond ((null result)
-                 (message "No lookup handler could find %S" identifier)
-                 nil)
-                ((markerp result)
-                 (funcall (or display-fn #'switch-to-buffer)
-                          (marker-buffer result))
-                 (goto-char result)
-                 result)
-                (result))
-      (with-current-buffer (marker-buffer origin)
-        (better-jumper-set-jump (marker-position origin)))
-      result)))
+    (unwind-protect
+        (when (cond ((null result)
+                     (message "No lookup handler could find %S" identifier)
+                     nil)
+                    ((markerp result)
+                     (funcall (or display-fn #'switch-to-buffer)
+                              (marker-buffer result))
+                     (goto-char result)
+                     result)
+                    (result))
+          (with-current-buffer (marker-buffer origin)
+            (better-jumper-set-jump (marker-position origin)))
+          result)
+      (set-marker origin nil))))
 
 
 ;;
 ;;; Lookup backends
 
+(autoload 'xref--show-defs "xref")
 (defun +lookup--xref-show (fn identifier &optional show-fn)
   (let ((xrefs (funcall fn
                         (xref-find-backend)
                         identifier)))
     (when xrefs
-      (funcall (or show-fn #'xref--show-defs)
-               (lambda () xrefs)
-               nil)
-      (if (cdr xrefs)
-          'deferred
-        t))))
+      (let ((marker-ring (ring-copy xref--marker-ring)))
+        (funcall (or show-fn #'xref--show-defs)
+                 (lambda () xrefs)
+                 nil)
+        (if (cdr xrefs)
+            'deferred
+          ;; xref will modify its marker stack when it finds a result to jump to.
+          ;; Use that to determine success.
+          (not (equal xref--marker-ring marker-ring)))))))
+
+(defun +lookup-dictionary-definition-backend-fn (identifier)
+  "Look up dictionary definition for IDENTIFIER."
+  (when (derived-mode-p 'text-mode)
+    (+lookup/dictionary-definition identifier)
+    'deferred))
+
+(defun +lookup-thesaurus-definition-backend-fn (identifier)
+  "Look up synonyms for IDENTIFIER."
+  (when (derived-mode-p 'text-mode)
+    (+lookup/synonyms identifier)
+    'deferred))
 
 (defun +lookup-xref-definitions-backend-fn (identifier)
   "Non-interactive wrapper for `xref-find-definitions'"
@@ -214,14 +245,39 @@ neither is available. These require ripgrep to be installed."
 (defun +lookup-evil-goto-definition-backend-fn (_identifier)
   "Uses `evil-goto-definition' to conduct a text search for IDENTIFIER in the
 current buffer."
-  (and (fboundp 'evil-goto-definition)
-       (ignore-errors
-         (cl-destructuring-bind (beg . end)
-             (bounds-of-thing-at-point 'symbol)
-           (evil-goto-definition)
-           (let ((pt (point)))
-             (not (and (>= pt beg)
-                       (<  pt end))))))))
+  (when (fboundp 'evil-goto-definition)
+    (ignore-errors
+      (cl-destructuring-bind (beg . end)
+          (bounds-of-thing-at-point 'symbol)
+        (evil-goto-definition)
+        (let ((pt (point)))
+          (not (and (>= pt beg)
+                    (<  pt end))))))))
+
+(defun +lookup-ffap-backend-fn (_identifier)
+  "Uses `find-file-at-point' to read file at point."
+  (require 'ffap)
+  (when (ffap-guesser)
+    (find-file-at-point)))
+
+(defun +lookup-bug-reference-backend-fn (_identifier)
+  "Searches for a bug reference in user/repo#123 or #123 format and opens it in
+the browser."
+  (require 'bug-reference)
+  (let ((bug-reference-url-format bug-reference-url-format)
+        (bug-reference-bug-regexp bug-reference-bug-regexp)
+        (bug-reference-mode (derived-mode-p 'text-mode 'conf-mode))
+        (bug-reference-prog-mode (derived-mode-p 'prog-mode)))
+    (bug-reference--run-auto-setup)
+    (unwind-protect
+        (catch 'found
+          (bug-reference-fontify (line-beginning-position) (line-end-position))
+          (dolist (o (overlays-at (point)))
+            ;; It should only be possible to have one URL overlay.
+            (when-let (url (overlay-get o 'bug-reference-url))
+              (browse-url url)
+              (throw 'found t))))
+      (bug-reference-unfontify (line-beginning-position) (line-end-position)))))
 
 
 ;;
@@ -239,6 +295,30 @@ evil-mode is active."
                      current-prefix-arg))
   (cond ((null identifier) (user-error "Nothing under point"))
         ((+lookup--jump-to :definition identifier nil arg))
+        ((error "Couldn't find the definition of %S" identifier))))
+
+;;;###autoload
+(defun +lookup/implementations (identifier &optional arg)
+  "Jump to the implementations of IDENTIFIER (defaults to the symbol at point).
+
+Each function in `+lookup-implementations-functions' is tried until one changes
+the point or current buffer."
+  (interactive (list (doom-thing-at-point-or-region)
+                     current-prefix-arg))
+  (cond ((null identifier) (user-error "Nothing under point"))
+        ((+lookup--jump-to :implementations identifier nil arg))
+        ((error "Couldn't find the implementations of %S" identifier))))
+
+;;;###autoload
+(defun +lookup/type-definition (identifier &optional arg)
+  "Jump to the type definition of IDENTIFIER (defaults to the symbol at point).
+
+Each function in `+lookup-type-definition-functions' is tried until one changes
+the point or current buffer."
+  (interactive (list (doom-thing-at-point-or-region)
+                     current-prefix-arg))
+  (cond ((null identifier) (user-error "Nothing under point"))
+        ((+lookup--jump-to :type-definition identifier nil arg))
         ((error "Couldn't find the definition of %S" identifier))))
 
 ;;;###autoload
@@ -268,22 +348,14 @@ for the current mode/buffer (if any), then falls back to the backends in
 
 (defvar ffap-file-finder)
 ;;;###autoload
-(defun +lookup/file (path)
+(defun +lookup/file (&optional path)
   "Figure out PATH from whatever is at point and open it.
 
 Each function in `+lookup-file-functions' is tried until one changes the point
 or the current buffer.
 
 Otherwise, falls back on `find-file-at-point'."
-  (interactive
-   (progn
-     (require 'ffap)
-     (list
-      (or (ffap-guesser)
-          (ffap-read-file-or-url
-           (if ffap-url-regexp "Find file or URL: " "Find file: ")
-           (doom-thing-at-point-or-region))))))
-  (require 'ffap)
+  (interactive)
   (cond ((and path
               buffer-file-name
               (file-equal-p path buffer-file-name)
@@ -306,7 +378,7 @@ Otherwise, falls back on `find-file-at-point'."
    (list (or (doom-thing-at-point-or-region 'word)
              (read-string "Look up in dictionary: "))
          current-prefix-arg))
-  (message "Looking up definition for %S" identifier)
+  (message "Looking up dictionary definition for %S" identifier)
   (cond ((and IS-MAC (require 'osx-dictionary nil t))
          (osx-dictionary--view-result identifier))
         ((and +lookup-dictionary-prefer-offline
