@@ -484,10 +484,6 @@
       (:prefix-map ("n" . "notes")
        :desc "Search notes for symbol"      "*" #'+default/search-notes-for-symbol-at-point
        :desc "Org agenda"                   "a" #'org-agenda
-       (:when (featurep! :tools biblio)
-        :desc "Bibliographic entries"        "b"
-        (cond ((featurep! :completion ivy)   #'ivy-bibtex)
-              ((featurep! :completion helm)  #'helm-bibtex)))
 
        :desc "Toggle last org-clock"        "c" #'+org/toggle-last-clock
        :desc "Cancel current org-clock"     "C" #'org-clock-cancel
@@ -528,7 +524,25 @@
         (:prefix ("j" . "journal")
          :desc "New Entry"           "j" #'org-journal-new-entry
          :desc "New Scheduled Entry" "J" #'org-journal-new-scheduled-entry
-         :desc "Search Forever"      "s" #'org-journal-search-forever)))
+         :desc "Search Forever"      "s" #'org-journal-search-forever))
+
+       (:when (featurep! :tools biblio)
+        (:prefix ("b" . "biblio")
+         (:when (featurep! :completion ivy)
+          :desc "Search entries"        "s" #'ivy-bibtex)
+         (:when (featurep! :completion helm)
+          :desc "Search entries"        "s" #'helm-bibtex)
+         (:when (featurep! :completion selectrum)
+          :desc "Search entries"        "s" #'bibtex-actions-insert-key
+          :desc "Insert BibTeX"         "b" #'bibtex-actions-insert-bibtex
+          :desc "Insert citation"       "c" #'bibtex-actions-insert-citation
+          :desc "Insert citekey"        "k" #'bibtex-actions-insert-key
+          :desc "Open PDF or link"      "o" #'bibtex-actions-open
+          :desc "Open link"             "l" #'bibtex-actions-open-link
+          :desc "Open PDF"              "p" #'bibtex-actions-open-pdf
+          :desc "Open BibTeX entries"   "e" #'bibtex-actions-open-entry
+          :desc "Open notes"            "n" #'bibtex-actions-open-notes))))
+
 
       ;;; <leader> o --- open
       (:prefix-map ("o" . "open")
